@@ -20,6 +20,9 @@ jobs:
     env:
       APP_BUNDLE_ID: io.github.m96chan.VirtualCamera4Mac
       EXT_BUNDLE_ID: io.github.m96chan.VirtualCamera4Mac.Extension
+      # Job-level so the "Update Homebrew Cask" step's `if:` can read it (a
+      # step's own env block is not reliably visible to that step's `if:`).
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -134,8 +137,107 @@ jobs:
           rm -f "$ZIP"
           ditto -c -k --keepParent "$APP" "$ZIP"
 
+      - name: Build, sign, notarize & staple .dmg
+        id: dmg
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/export/VirtualCamera4Mac.app"
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG="$RUNNER_TEMP/VirtualCamera4Mac-${VERSION}.dmg"
+          KEY_PATH="$RUNNER_TEMP/asc_authkey.p8"
+
+          echo "$ASC_KEY_P8_BASE64" | base64 --decode > "$KEY_PATH"
+
+          # Stage the already-signed, stapled .app next to an /Applications
+          # symlink so the .dmg opens as a familiar drag-to-install window.
+          STAGING="$RUNNER_TEMP/dmg-staging"
+          rm -rf "$STAGING"
+          mkdir -p "$STAGING"
+          cp -R "$APP" "$STAGING/VirtualCamera4Mac.app"
+          ln -s /Applications "$STAGING/Applications"
+
+          hdiutil create \
+            -volname "VirtualCamera4Mac" \
+            -srcfolder "$STAGING" \
+            -ov -format UDZO \
+            "$DMG"
+
+          # Sign the .dmg with the same Developer ID identity, then notarize and
+          # staple it — a stapled .dmg lets Gatekeeper verify offline.
+          codesign --force --timestamp \
+            --sign "Developer ID Application" "$DMG"
+          xcrun notarytool submit "$DMG" \
+            --key "$KEY_PATH" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
+
+          SHA256="$(shasum -a 256 "$DMG" | awk '{print $1}')"
+          {
+            echo "version=$VERSION"
+            echo "dmg=$DMG"
+            echo "sha256=$SHA256"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ runner.temp }}/VirtualCamera4Mac.zip
+          files: |
+            ${{ runner.temp }}/VirtualCamera4Mac.zip
+            ${{ steps.dmg.outputs.dmg }}
           generate_release_notes: true
+
+      - name: Update Homebrew Cask
+        # Commit the refreshed Cask (version, url, sha256) to the tap repo so
+        # `brew install --cask m96-chan/tap/virtualcamera4mac` tracks the release.
+        # Requires HOMEBREW_TAP_TOKEN: a PAT with write access to
+        # m96-chan/homebrew-tap. Skipped automatically if the secret is absent.
+        if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
+        env:
+          VERSION: ${{ steps.dmg.outputs.version }}
+          SHA256: ${{ steps.dmg.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          TAP_DIR="$RUNNER_TEMP/homebrew-tap"
+          rm -rf "$TAP_DIR"
+          git clone --depth 1 \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/m96-chan/homebrew-tap.git" \
+            "$TAP_DIR"
+          mkdir -p "$TAP_DIR/Casks"
+          cat > "$TAP_DIR/Casks/virtualcamera4mac.rb" <<CASK
+          cask "virtualcamera4mac" do
+            version "${VERSION}"
+            sha256 "${SHA256}"
+
+            url "https://github.com/m96-chan/VirtualCamera4Mac/releases/download/v#{version}/VirtualCamera4Mac-#{version}.dmg"
+            name "VirtualCamera4Mac"
+            desc "Virtual camera for macOS backed by a CoreMediaIO system extension"
+            homepage "https://github.com/m96-chan/VirtualCamera4Mac"
+
+            depends_on macos: ">= :ventura"
+
+            app "VirtualCamera4Mac.app"
+
+            uninstall quit: "io.github.m96chan.VirtualCamera4Mac"
+
+            zap trash: [
+              "~/Library/Application Support/VirtualCamera4Mac",
+            ]
+          end
+          CASK
+
+          cd "$TAP_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/virtualcamera4mac.rb
+          if git diff --cached --quiet; then
+            echo "Cask already up to date for ${VERSION}; nothing to commit."
+          else
+            git commit -m "virtualcamera4mac ${VERSION}"
+            git push
+          fi

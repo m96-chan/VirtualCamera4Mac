@@ -139,6 +139,28 @@ Decision, in short:
 
 ---
 
+## Installation
+
+macOS 13 (Ventura) or later. Two ways to install:
+
+**Homebrew (recommended)**
+
+```bash
+brew install --cask m96-chan/tap/virtualcamera4mac
+```
+
+**Direct download**
+
+Grab `VirtualCamera4Mac-<version>.dmg` from the
+[latest release](https://github.com/m96-chan/VirtualCamera4Mac/releases/latest),
+open it, and drag **VirtualCamera4Mac** into **Applications**. The `.dmg` is
+signed with a Developer ID and notarized (stapled), so Gatekeeper verifies it
+offline.
+
+Because the app ships a System Extension, it must live in `/Applications` — both
+methods put it there. On first launch, open the menu-bar item and click
+**Install / Activate**, then approve the extension in **System Settings**.
+
 ## Requirements
 
 - macOS 13 (Ventura) or later — deployment target; recommended for the mature
@@ -205,9 +227,10 @@ appears to any app using AVFoundation / CoreMediaIO (verify with
   core unit tests and an unsigned compile check of the app + extension. No
   secrets required.
 - **Release** (`.github/workflows/release.yml`) — on `v*` tags: signed
-  (Developer ID, Manual) build, notarization, stapling, and a GitHub Release.
-  Setup and required secrets are documented in
-  [`docs/ci-signing.md`](docs/ci-signing.md).
+  (Developer ID, Manual) build, notarization, stapling, a notarized `.dmg`, a
+  GitHub Release (`.zip` + `.dmg`), and — when `HOMEBREW_TAP_TOKEN` is set — an
+  automatic Cask bump on `m96-chan/homebrew-tap`. Setup and required secrets are
+  documented in [`docs/ci-signing.md`](docs/ci-signing.md).
 
 ## Roadmap
 
@@ -222,7 +245,8 @@ appears to any app using AVFoundation / CoreMediaIO (verify with
   device by UID, feed the sink) + a `vc4m-testsource` sample producer.
 - [ ] Versioned producer protocol doc + producer-identity token gate.
 - [ ] AvataCam reference integration.
-- [ ] Signed installer — notarized `.dmg` + Homebrew tap.
+- [x] Signed installer — notarized `.dmg` + Homebrew tap (`brew install --cask
+  m96-chan/tap/virtualcamera4mac`).
 
 ## Distribution & signing
 

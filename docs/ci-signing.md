@@ -71,8 +71,12 @@ Under **Settings → Secrets and variables → Actions**:
 | `KEYCHAIN_PASSWORD` | any random string (temp keychain) | set |
 | `BUILD_CERTIFICATE_BASE64` | `base64 -i DeveloperID.p12` | set |
 | `P12_PASSWORD` | the `.p12` export password | set |
+| `HOMEBREW_TAP_TOKEN` | PAT with **write** access to `m96-chan/homebrew-tap` (commits the refreshed Cask) | optional |
 
-All secrets are populated; `v0.0.1` shipped a signed + notarized release.
+All core signing secrets are populated; `v0.0.1` shipped a signed + notarized
+release. `HOMEBREW_TAP_TOKEN` is optional — without it the release still
+publishes the `.dmg` + `.zip`; the "Update Homebrew Cask" step is skipped and
+the Cask must be bumped manually.
 
 The `ASC_*` secrets are reused by the release workflow to notarize
 (`notarytool --key`), so no Apple ID / app-specific password is needed.
@@ -85,8 +89,12 @@ git push origin v0.0.1
 ```
 
 The workflow archives, exports (Developer ID, manual), notarizes with the API
-key (`notarytool --wait`), staples, and attaches `VirtualCamera4Mac.zip` to a
-GitHub Release. It can also be run manually from the Actions tab.
+key (`notarytool --wait`), and staples. It then builds a **notarized, stapled
+`.dmg`** (app + `/Applications` symlink, via `hdiutil`) and attaches both
+`VirtualCamera4Mac.zip` and `VirtualCamera4Mac-<version>.dmg` to a GitHub
+Release. If `HOMEBREW_TAP_TOKEN` is set, it also commits the refreshed Cask
+(version, url, `sha256`) to `m96-chan/homebrew-tap`. It can also be run manually
+from the Actions tab.
 
 ## Notes
 

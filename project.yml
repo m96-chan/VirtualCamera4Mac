@@ -98,6 +98,10 @@ targets:
       properties:
         CFBundleDisplayName: VirtualCamera4Mac
         LSMinimumSystemVersion: "13.0"
+        # App icon from the asset catalog (AppIcon.appiconset). actool merges a
+        # partial Info.plist, but the custom Info.plist + GENERATE_INFOPLIST_FILE
+        # =NO makes this explicit key the reliable reference.
+        CFBundleIconName: AppIcon
         # Menu bar agent — no Dock icon (#5).
         LSUIElement: true
         NSSystemExtensionUsageDescription: Installs the VirtualCamera4Mac virtual camera system extension.
@@ -114,6 +118,9 @@ targets:
         SWIFT_VERSION: "5.0"
         GENERATE_INFOPLIST_FILE: "NO"
         PROVISIONING_PROFILE_SPECIFIER: "VirtualCamera4Mac Developer ID"
+        # App icon (Sources/App/Assets.xcassets/AppIcon.appiconset). The whole
+        # Sources/App directory is a source, so the asset catalog is compiled in.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
   # ---- Producer SDK (feeds the sink stream) (#11) -------------------------
   VirtualCameraProducer:
