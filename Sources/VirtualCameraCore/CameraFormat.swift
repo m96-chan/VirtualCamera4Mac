@@ -7,6 +7,14 @@ public struct CameraFormat: Sendable, Equatable {
     public enum PixelFormat: Sendable, Equatable {
         case bgra
         case nv12
+
+        /// Short uppercase name used in diagnostics/labels.
+        public var name: String {
+            switch self {
+            case .bgra: return "BGRA"
+            case .nv12: return "NV12"
+            }
+        }
     }
 
     public let width: Int
@@ -20,5 +28,10 @@ public struct CameraFormat: Sendable, Equatable {
         self.height = height
         self.pixelFormat = pixelFormat
         self.frameRate = frameRate
+    }
+
+    /// Human-readable description, e.g. `1280x720 BGRA 30fps`.
+    public var label: String {
+        "\(width)x\(height) \(pixelFormat.name) \(frameRate)fps"
     }
 }

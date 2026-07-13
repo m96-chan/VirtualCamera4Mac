@@ -202,13 +202,15 @@ appears to any app using AVFoundation / CoreMediaIO (verify with
 
 ## Roadmap
 
-- [ ] Camera Extension scaffold publishing a static test pattern.
-- [ ] Container app with System Extension install/activation flow.
+- [x] Camera Extension scaffold publishing a static test pattern.
+- [x] Container app with System Extension install/activation flow.
+- [x] Format negotiation — advertises **720p / 1080p × BGRA / NV12 @ 30fps**; the
+  consumer app selects a format (invalid selections clamp to the default).
+- [x] Notarized Developer ID release (`v0.0.1`).
 - [ ] XPC + `IOSurface` frame transport.
 - [ ] Producer SDK and versioned IPC protocol doc.
 - [ ] AvataCam reference integration.
-- [ ] Format negotiation (BGRA / NV12, multiple resolutions & frame rates).
-- [ ] Notarized release + signed installer.
+- [ ] Signed installer — notarized `.dmg` + Homebrew tap.
 
 ## Distribution & signing
 
