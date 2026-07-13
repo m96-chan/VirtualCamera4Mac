@@ -11,3 +11,20 @@ xcuserdata/
 
 # macOS
 .DS_Store
+
+# Signing material — NEVER commit these
+*.p8
+*.p12
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+AuthKey_*.p8
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/test_output/
+fastlane/README.md
+vendor/bundle/
+.bundle/

@@ -111,19 +111,23 @@ jobs:
 
       - name: Notarize & staple
         env:
-          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
         run: |
           set -euo pipefail
           APP="$RUNNER_TEMP/export/VirtualCamera4Mac.app"
           ZIP="$RUNNER_TEMP/VirtualCamera4Mac.zip"
+          KEY_PATH="$RUNNER_TEMP/asc_authkey.p8"
+
+          # Same App Store Connect API key used by `fastlane setup_signing`.
+          echo "$ASC_KEY_P8_BASE64" | base64 --decode > "$KEY_PATH"
 
           ditto -c -k --keepParent "$APP" "$ZIP"
           xcrun notarytool submit "$ZIP" \
-            --apple-id "$NOTARY_APPLE_ID" \
-            --team-id "$APPLE_TEAM_ID" \
-            --password "$NOTARY_PASSWORD" \
+            --key "$KEY_PATH" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER_ID" \
             --wait
           xcrun stapler staple "$APP"
           # Repackage the stapled app for distribution.
