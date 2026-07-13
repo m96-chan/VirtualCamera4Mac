@@ -115,6 +115,38 @@ targets:
         GENERATE_INFOPLIST_FILE: "NO"
         PROVISIONING_PROFILE_SPECIFIER: "VirtualCamera4Mac Developer ID"
 
+  # ---- Producer SDK (feeds the sink stream) (#11) -------------------------
+  VirtualCameraProducer:
+    type: framework
+    platform: macOS
+    sources:
+      - Sources/Producer
+    dependencies:
+      - target: VirtualCameraCore
+        embed: false
+      - sdk: CoreMediaIO.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.m96chan.VirtualCameraProducer
+
+  # ---- Sample producer CLI (on-device end-to-end demo) (#11) --------------
+  vc4m-testsource:
+    type: tool
+    platform: macOS
+    sources:
+      - Sources/TestSource
+    dependencies:
+      - target: VirtualCameraProducer
+        embed: false
+      - target: VirtualCameraCore
+        embed: false
+      - sdk: CoreMediaIO.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.m96chan.vc4m-testsource
+        # Find the linked frameworks next to the executable in the build dir.
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path"
+
 schemes:
   VirtualCameraCore:
     build:
@@ -133,3 +165,10 @@ schemes:
       targets:
         VirtualCamera4Mac: all
         VirtualCamera4MacExtension: all
+
+  vc4m-testsource:
+    build:
+      targets:
+        vc4m-testsource: all
+    run:
+      executable: vc4m-testsource

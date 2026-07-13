@@ -73,7 +73,7 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
     init(localizedName: String) {
         super.init()
 
-        let deviceID = UUID(uuidString: "B9E1C0F2-6A2E-4B7D-9C3A-2F1E7D4A5C6B")!
+        let deviceID = UUID(uuidString: VirtualCameraIdentity.deviceUID)!
         device = CMIOExtensionDevice(localizedName: localizedName,
                                      deviceID: deviceID,
                                      legacyDeviceID: nil,
@@ -423,7 +423,7 @@ final class ExtensionProviderSource: NSObject, CMIOExtensionProviderSource {
     init(clientQueue: DispatchQueue?) {
         super.init()
         provider = CMIOExtensionProvider(source: self, clientQueue: clientQueue)
-        deviceSource = ExtensionDeviceSource(localizedName: "VirtualCamera4Mac")
+        deviceSource = ExtensionDeviceSource(localizedName: VirtualCameraIdentity.localizedName)
         do {
             try provider.addDevice(deviceSource.device)
         } catch {
@@ -439,7 +439,7 @@ final class ExtensionProviderSource: NSObject, CMIOExtensionProviderSource {
     func providerProperties(forProperties properties: Set<CMIOExtensionProperty>) throws -> CMIOExtensionProviderProperties {
         let props = CMIOExtensionProviderProperties(dictionary: [:])
         if properties.contains(.providerManufacturer) {
-            props.manufacturer = "m96-chan"
+            props.manufacturer = VirtualCameraIdentity.manufacturer
         }
         return props
     }

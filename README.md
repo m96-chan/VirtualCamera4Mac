@@ -218,7 +218,9 @@ appears to any app using AVFoundation / CoreMediaIO (verify with
   consumer app selects a format (invalid selections clamp to the default).
 - [x] Notarized Developer ID release (`v0.0.1`).
 - [x] CMIO **sink stream** frame transport (extension endpoint; zero-copy IOSurface, latest-frame-wins, standby fallback).
-- [ ] Producer SDK (discover sink + enqueue) and versioned protocol doc.
+- [x] Producer SDK — `VirtualCameraProducer.VirtualCameraSink` (discover the
+  device by UID, feed the sink) + a `vc4m-testsource` sample producer.
+- [ ] Versioned producer protocol doc + producer-identity token gate.
 - [ ] AvataCam reference integration.
 - [ ] Signed installer — notarized `.dmg` + Homebrew tap.
 
