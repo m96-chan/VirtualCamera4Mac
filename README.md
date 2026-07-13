@@ -181,5 +181,6 @@ compatibility impact.
 
 ## License
 
-TBD — a permissive OSS license (MIT or Apache-2.0) is intended. See
-[`LICENSE`](LICENSE) once added.
+Licensed under the **Apache License, Version 2.0**. See [`LICENSE`](LICENSE).
+
+Copyright 2026 m96-chan.
