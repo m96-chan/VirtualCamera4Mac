@@ -203,6 +203,7 @@ appears to any app using AVFoundation / CoreMediaIO (verify with
 ## Roadmap
 
 - [x] Camera Extension scaffold publishing a static test pattern.
+- [x] No-signal standby image (horizontal test bands) shown until a producer connects.
 - [x] Container app with System Extension install/activation flow.
 - [x] Format negotiation — advertises **720p / 1080p × BGRA / NV12 @ 30fps**; the
   consumer app selects a format (invalid selections clamp to the default).

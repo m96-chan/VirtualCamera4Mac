@@ -59,6 +59,19 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
     private var _bufferPool: CVPixelBufferPool!
     private var _bufferAuxAttributes: NSDictionary!
 
+    // Standby decision (#2). Producer transport is #4: until it lands there is
+    // no producer, so the state is always `.waitingForProducer` and every frame
+    // is the standby image. When #4 arrives it sets `_producerConnected` and
+    // `_secondsSinceLastFrame`, and `.live` frames replace standby.
+    private let _standbyPolicy = StandbyPolicy(stallTimeout: 1.0)
+    private var _producerConnected = false
+    private var _secondsSinceLastFrame: Double?
+
+    private var signalState: SignalState {
+        _standbyPolicy.state(producerConnected: _producerConnected,
+                             secondsSinceLastFrame: _secondsSinceLastFrame)
+    }
+
     init(localizedName: String) {
         super.init()
 
@@ -163,7 +176,12 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
             return
         }
 
-        fillTestPattern(pixelBuffer)
+        switch signalState {
+        case .live:
+            break // #4: fill from the latest producer IOSurface instead of standby.
+        case .waitingForProducer, .error:
+            fillStandbyPattern(pixelBuffer)
+        }
 
         var timingInfo = CMSampleTimingInfo()
         timingInfo.presentationTimeStamp = CMClockGetTime(CMClockGetHostTimeClock())
@@ -190,25 +208,34 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
             hostTimeInNanoseconds: UInt64(timingInfo.presentationTimeStamp.seconds * Double(NSEC_PER_SEC)))
     }
 
-    /// Static standby pattern for #1, filled per pixel format. #2 replaces this
-    /// with real standby art.
-    private func fillTestPattern(_ pixelBuffer: CVPixelBuffer) {
+    /// The standby ("no signal") image (#2): horizontal bands so the device
+    /// reads as an intentional test/standby signal rather than a black or flat
+    /// frame. Rendered per pixel format and cheaply (row-run fills).
+    private func fillStandbyPattern(_ pixelBuffer: CVPixelBuffer) {
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
 
         switch _activeFormat.pixelFormat {
         case .bgra:
-            if let base = CVPixelBufferGetBaseAddress(pixelBuffer) {
-                let rows = CVPixelBufferGetHeight(pixelBuffer)
-                let rowBytes = CVPixelBufferGetBytesPerRow(pixelBuffer)
-                memset(base, 0x3A, rowBytes * rows) // opaque dark gray
+            // Packed BGRA (little-endian 0xAARRGGBB) colour bands.
+            let bands: [UInt32] = [0xFF1E1E24, 0xFF2E5E8C, 0xFF3AA0A0, 0xFF6ABF4B,
+                                   0xFFE0B341, 0xFFCF5C36, 0xFFA0405C, 0xFF1E1E24]
+            guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
+            let rows = CVPixelBufferGetHeight(pixelBuffer)
+            let rowBytes = CVPixelBufferGetBytesPerRow(pixelBuffer)
+            for row in 0..<rows {
+                var colour = bands[row * bands.count / rows]
+                memset_pattern4(base + row * rowBytes, &colour, rowBytes)
             }
         case .nv12:
-            // Plane 0: luma (Y). Plane 1: interleaved chroma (CbCr).
+            // Luma brightness bands + neutral chroma.
+            let lumaBands: [UInt8] = [0x20, 0x40, 0x60, 0x80, 0xA0, 0xC0, 0xE0, 0x20]
             if let luma = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) {
                 let rows = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
                 let rowBytes = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
-                memset(luma, 0x40, rowBytes * rows) // dark luma
+                for row in 0..<rows {
+                    memset(luma + row * rowBytes, Int32(lumaBands[row * lumaBands.count / rows]), rowBytes)
+                }
             }
             if let chroma = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1) {
                 let rows = CVPixelBufferGetHeightOfPlane(pixelBuffer, 1)
