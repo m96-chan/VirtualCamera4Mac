@@ -243,6 +243,10 @@ appears to any app using AVFoundation / CoreMediaIO (verify with
 - [x] CMIO **sink stream** frame transport (extension endpoint; zero-copy IOSurface, latest-frame-wins, standby fallback).
 - [x] Producer SDK — `VirtualCameraProducer.VirtualCameraSink` (discover the
   device by UID, feed the sink) + a `vc4m-testsource` sample producer.
+- [ ] Output transforms (#6) — horizontal mirror, vertical flip, and 180°
+  rotation, composable and persisted, applied in the extension via vImage and
+  controlled from the menu bar over a custom CMIO property. Dimension-changing
+  90/270° rotation lands with aspect-ratio fitting (#7).
 - [ ] Versioned producer protocol doc + producer-identity token gate.
 - [ ] AvataCam reference integration.
 - [x] Signed installer — notarized `.dmg` + Homebrew tap (`brew install --cask

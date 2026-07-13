@@ -93,6 +93,8 @@ targets:
         embed: true
       - target: VirtualCamera4MacExtension
         embed: true
+      # Set the output transform on the device via a custom CMIO property (#6).
+      - sdk: CoreMediaIO.framework
     info:
       path: Sources/App/Info.plist
       properties:
