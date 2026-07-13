@@ -10,6 +10,13 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     GENERATE_INFOPLIST_FILE: "YES"
+    # Developer ID signing for release. CI verify passes CODE_SIGNING_ALLOWED=NO
+    # so tests / compile-checks need no certificate; the release build signs for
+    # real. Per-target provisioning profiles are set on the app + extension.
+    DEVELOPMENT_TEAM: "9U26G7YWJ9"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "Developer ID Application"
+    ENABLE_HARDENED_RUNTIME: "YES"
 
 targets:
   # ---- Pure, unit-testable core (Phase A) ---------------------------------
@@ -21,10 +28,6 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.m96chan.VirtualCameraCore
-        # Phase A logic/tests build without a Development Team (ad-hoc sign).
-        CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGNING_REQUIRED: "NO"
 
   VirtualCameraCoreTests:
     type: bundle.unit-test
@@ -36,9 +39,6 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.m96chan.VirtualCameraCoreTests
-        CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGNING_REQUIRED: "NO"
 
   # ---- Camera Extension (CMIO System Extension) (Phase B) -----------------
   VirtualCamera4MacExtension:
@@ -70,9 +70,7 @@ targets:
         # Swift 6 strict concurrency. Core stays on Swift 6.
         SWIFT_VERSION: "5.0"
         GENERATE_INFOPLIST_FILE: "NO"
-        DEVELOPMENT_TEAM: "9U26G7YWJ9"
-        CODE_SIGN_STYLE: Manual
-        ENABLE_HARDENED_RUNTIME: "YES"
+        PROVISIONING_PROFILE_SPECIFIER: "VirtualCamera4Mac Extension Developer ID"
         SKIP_INSTALL: "YES"
 
   # ---- Container app (Phase B) --------------------------------------------
@@ -104,9 +102,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.m96chan.VirtualCamera4Mac
         SWIFT_VERSION: "5.0"
         GENERATE_INFOPLIST_FILE: "NO"
-        DEVELOPMENT_TEAM: "9U26G7YWJ9"
-        CODE_SIGN_STYLE: Manual
-        ENABLE_HARDENED_RUNTIME: "YES"
+        PROVISIONING_PROFILE_SPECIFIER: "VirtualCamera4Mac Developer ID"
 
 schemes:
   VirtualCameraCore:
