@@ -149,6 +149,9 @@ Decision, in short:
 - `Sources/VirtualCameraCore/` — pure-Swift, dependency-free core (device
   lifecycle, stream state machine, format catalog). Unit-tested in isolation.
 - `Tests/VirtualCameraCoreTests/` — [swift-testing](https://github.com/swiftlang/swift-testing) unit tests.
+- `Sources/Extension/` — the CMIO Camera Extension (`CMIOExtensionProviderSource`),
+  a System Extension that publishes the virtual camera device.
+- `Sources/App/` — the container app that installs/activates the extension.
 
 ## Building & testing
 
@@ -161,11 +164,29 @@ xcodebuild test \
   -scheme VirtualCameraCore \
   -destination 'platform=macOS' \
   -enableCodeCoverage YES
+
+# Compile-verify the app + Camera Extension without signing:
+xcodebuild build \
+  -project VirtualCamera4Mac.xcodeproj \
+  -scheme VirtualCamera4Mac \
+  -destination 'platform=macOS' \
+  CODE_SIGNING_ALLOWED=NO
 ```
 
-The container app + Camera Extension targets (which request System Extension
-activation on first launch, approved in **System Settings → General → Login
-Items & Extensions**) require code signing and are added in a later phase.
+### Running the Camera Extension locally
+
+The extension is a **System Extension** and must be signed (Manual signing, team
+`9U26G7YWJ9`) to install. For local development without notarization/moving to
+`/Applications`, enable System Extension developer mode:
+
+```bash
+systemextensionsctl developer on
+```
+
+Then run the **VirtualCamera4Mac** app and click **Install / Activate**; approve
+it in **System Settings → General → Login Items & Extensions**. The device then
+appears to any app using AVFoundation / CoreMediaIO (verify with
+`system_profiler SPCameraDataType` or QuickTime → New Movie Recording).
 
 ## Roadmap
 
