@@ -1,34 +1,16 @@
 import Foundation
 import SystemExtensions
 import os.log
+import VirtualCameraCore
 
 private let logger = Logger(subsystem: "io.github.m96chan.VirtualCamera4Mac",
                             category: "SystemExtension")
 
-/// Drives activation/deactivation of the embedded Camera Extension and exposes
-/// a human-readable status for the UI (issue #1 container-app slice; the full
-/// menu-bar experience is #5).
+/// Drives activation/deactivation of the embedded Camera Extension and publishes
+/// the user-facing ``ActivationStatus`` for the menu bar app (issue #5).
 final class SystemExtensionManager: NSObject, ObservableObject, OSSystemExtensionRequestDelegate {
 
-    enum Status: Equatable {
-        case idle
-        case activating
-        case needsApproval
-        case active
-        case failed(String)
-
-        var message: String {
-            switch self {
-            case .idle: return "Not installed"
-            case .activating: return "Activating…"
-            case .needsApproval: return "Waiting for approval in System Settings → General → Login Items & Extensions"
-            case .active: return "Active"
-            case .failed(let reason): return "Failed: \(reason)"
-            }
-        }
-    }
-
-    @Published private(set) var status: Status = .idle
+    @Published private(set) var status: ActivationStatus = .notInstalled
 
     /// The embedded extension's bundle identifier, discovered from the app
     /// bundle so it always matches what was actually shipped.
