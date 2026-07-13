@@ -7,8 +7,7 @@ import VirtualCameraCore
 private let logger = Logger(subsystem: "io.github.m96chan.VirtualCamera4Mac.Extension",
                             category: "Extension")
 
-/// The advertised format matrix, sourced from the pure core so the extension and
-/// the tested logic agree on what is advertised (issue #3).
+/// The advertised format matrix, sourced from the pure core (issue #3).
 private let formatCatalog = FormatCatalog.standard
 
 private func cvPixelFormat(for pixelFormat: CameraFormat.PixelFormat) -> OSType {
@@ -37,18 +36,23 @@ private func makeStreamFormat(for format: CameraFormat) -> CMIOExtensionStreamFo
                                      validFrameDurations: nil)
 }
 
+private func hostTimeNanoseconds(_ time: CMTime) -> UInt64 {
+    UInt64(time.seconds * Double(NSEC_PER_SEC))
+}
+
 // MARK: - Device Source
 
-/// Backs the always-present virtual camera device and drives the static
-/// test-pattern frames. Advertises the full format matrix (#3) and rebuilds its
-/// buffer pool when the consumer selects a different format. Producer transport
-/// is #4; richer standby art is #2.
+/// Publishes a `.source` stream (camera clients consume) and a `.sink` stream
+/// (a producer feeds — issue #4). The source frame loop forwards the latest
+/// producer frame when live, or the standby image when the producer is absent
+/// or stalled (#2). CoreMediaIO moves the frame's IOSurface across the process
+/// boundary, so this is zero-copy without any XPC.
 final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
 
     private(set) var device: CMIOExtensionDevice!
-    private var _streamSource: ExtensionStreamSource!
+    private var _sourceStreamSource: SourceStreamSource!
+    private var _sinkStreamSource: SinkStreamSource!
 
-    /// Number of active clients; the timer runs while > 0.
     private var _streamingCounter: UInt32 = 0
     private var _timer: DispatchSourceTimer?
     private let _timerQueue = DispatchQueue(label: "io.github.m96chan.VirtualCamera4Mac.timer",
@@ -59,18 +63,12 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
     private var _bufferPool: CVPixelBufferPool!
     private var _bufferAuxAttributes: NSDictionary!
 
-    // Standby decision (#2). Producer transport is #4: until it lands there is
-    // no producer, so the state is always `.waitingForProducer` and every frame
-    // is the standby image. When #4 arrives it sets `_producerConnected` and
-    // `_secondsSinceLastFrame`, and `.live` frames replace standby.
+    // Producer transport (#4). The sink drain updates these on `_timerQueue`;
+    // the source loop reads them to pick live vs standby (#2).
     private let _standbyPolicy = StandbyPolicy(stallTimeout: 1.0)
     private var _producerConnected = false
-    private var _secondsSinceLastFrame: Double?
-
-    private var signalState: SignalState {
-        _standbyPolicy.state(producerConnected: _producerConnected,
-                             secondsSinceLastFrame: _secondsSinceLastFrame)
-    }
+    private var _latestSinkBuffer: CMSampleBuffer?
+    private var _lastSinkHostTimeSeconds: Double?
 
     init(localizedName: String) {
         super.init()
@@ -83,18 +81,23 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
 
         configure(for: formatCatalog.defaultFormat)
 
-        let streamID = UUID(uuidString: "3D2C1B0A-9E8F-4A6B-8C7D-1E2F3A4B5C6D")!
-        _streamSource = ExtensionStreamSource(localizedName: "VirtualCamera4Mac.Video",
-                                              streamID: streamID,
-                                              device: device)
+        _sourceStreamSource = SourceStreamSource(
+            localizedName: "VirtualCamera4Mac.Video",
+            streamID: UUID(uuidString: "3D2C1B0A-9E8F-4A6B-8C7D-1E2F3A4B5C6D")!,
+            device: device)
+        _sinkStreamSource = SinkStreamSource(
+            localizedName: "VirtualCamera4Mac.Input",
+            streamID: UUID(uuidString: "6F5E4D3C-2B1A-4E9D-8C7B-6A5F4E3D2C1B")!,
+            device: device)
+
         do {
-            try device.addStream(_streamSource.stream)
+            try device.addStream(_sourceStreamSource.stream)
+            try device.addStream(_sinkStreamSource.stream)
         } catch {
             fatalError("Failed to add stream: \(error.localizedDescription)")
         }
     }
 
-    /// (Re)build the pixel-buffer pool and format description for `format`.
     private func configure(for format: CameraFormat) {
         _activeFormat = format
         _videoDescription = makeVideoDescription(for: format)
@@ -111,8 +114,6 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
         _bufferAuxAttributes = [kCVPixelBufferPoolAllocationThresholdKey: 5]
     }
 
-    /// Switch to the format at `index` (clamped to a valid selection). Rebuilds
-    /// the buffer pool so the next frame is emitted in the new format.
     func setActiveFormat(index: Int) {
         let resolved = formatCatalog.resolvedIndex(for: index)
         guard let format = formatCatalog.format(at: resolved), format != _activeFormat else { return }
@@ -135,24 +136,40 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
         return deviceProperties
     }
 
-    func setDeviceProperties(_ deviceProperties: CMIOExtensionDeviceProperties) throws {
-        // No writable device properties yet.
+    func setDeviceProperties(_ deviceProperties: CMIOExtensionDeviceProperties) throws {}
+
+    // MARK: Producer (sink) frames — called from the sink drain loop.
+
+    func producerDidStart() {
+        _timerQueue.async { self._producerConnected = true }
     }
 
-    // MARK: Frame production
+    func producerDidStop() {
+        _timerQueue.async {
+            self._producerConnected = false
+            self._latestSinkBuffer = nil
+            self._lastSinkHostTimeSeconds = nil
+        }
+    }
+
+    func receiveSinkFrame(_ sampleBuffer: CMSampleBuffer) {
+        _timerQueue.async {
+            self._latestSinkBuffer = sampleBuffer
+            self._lastSinkHostTimeSeconds = CMClockGetTime(CMClockGetHostTimeClock()).seconds
+        }
+    }
+
+    // MARK: Source frame loop.
 
     func startStreaming() {
         guard _bufferPool != nil else { return }
-
         _streamingCounter += 1
         guard _timer == nil else { return }
 
         let timer = DispatchSource.makeTimerSource(flags: .strict, queue: _timerQueue)
         timer.schedule(deadline: .now(), repeating: 1.0 / Double(_activeFormat.frameRate),
                        leeway: .milliseconds(1))
-        timer.setEventHandler { [weak self] in
-            self?.emitFrame()
-        }
+        timer.setEventHandler { [weak self] in self?.emitFrame() }
         timer.resume()
         _timer = timer
     }
@@ -167,7 +184,38 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
         }
     }
 
+    /// Runs on `_timerQueue`. Forwards the latest producer frame when live,
+    /// otherwise emits the standby image.
     private func emitFrame() {
+        let age = _lastSinkHostTimeSeconds.map { CMClockGetTime(CMClockGetHostTimeClock()).seconds - $0 }
+        let state = _standbyPolicy.state(producerConnected: _producerConnected, secondsSinceLastFrame: age)
+
+        switch state {
+        case .live:
+            if let buffer = _latestSinkBuffer {
+                sendToSource(retimed(buffer))
+            } else {
+                emitStandby()
+            }
+        case .waitingForProducer, .error:
+            emitStandby()
+        }
+    }
+
+    private func retimed(_ buffer: CMSampleBuffer) -> CMSampleBuffer {
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: Int32(_activeFormat.frameRate)),
+                                        presentationTimeStamp: CMClockGetTime(CMClockGetHostTimeClock()),
+                                        decodeTimeStamp: .invalid)
+        var copy: CMSampleBuffer?
+        CMSampleBufferCreateCopyWithNewTiming(allocator: kCFAllocatorDefault,
+                                              sampleBuffer: buffer,
+                                              sampleTimingEntryCount: 1,
+                                              sampleTimingArray: &timing,
+                                              sampleBufferOut: &copy)
+        return copy ?? buffer
+    }
+
+    private func emitStandby() {
         var pixelBufferOut: CVPixelBuffer?
         let allocErr = CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(
             kCFAllocatorDefault, _bufferPool, _bufferAuxAttributes, &pixelBufferOut)
@@ -175,49 +223,35 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
             logger.error("Out of pixel buffers: \(allocErr, privacy: .public)")
             return
         }
-
-        switch signalState {
-        case .live:
-            break // #4: fill from the latest producer IOSurface instead of standby.
-        case .waitingForProducer, .error:
-            fillStandbyPattern(pixelBuffer)
-        }
+        fillStandbyPattern(pixelBuffer)
 
         var timingInfo = CMSampleTimingInfo()
         timingInfo.presentationTimeStamp = CMClockGetTime(CMClockGetHostTimeClock())
-
         var sampleBufferOut: CMSampleBuffer?
         let sbErr = CMSampleBufferCreateForImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: pixelBuffer,
-            dataReady: true,
-            makeDataReadyCallback: nil,
-            refcon: nil,
-            formatDescription: _videoDescription,
-            sampleTiming: &timingInfo,
-            sampleBufferOut: &sampleBufferOut)
-
+            allocator: kCFAllocatorDefault, imageBuffer: pixelBuffer, dataReady: true,
+            makeDataReadyCallback: nil, refcon: nil, formatDescription: _videoDescription,
+            sampleTiming: &timingInfo, sampleBufferOut: &sampleBufferOut)
         guard sbErr == noErr, let sampleBuffer = sampleBufferOut else {
             logger.error("Failed to create sample buffer: \(sbErr, privacy: .public)")
             return
         }
-
-        _streamSource.stream.send(
-            sampleBuffer,
-            discontinuity: [],
-            hostTimeInNanoseconds: UInt64(timingInfo.presentationTimeStamp.seconds * Double(NSEC_PER_SEC)))
+        sendToSource(sampleBuffer)
     }
 
-    /// The standby ("no signal") image (#2): horizontal bands so the device
-    /// reads as an intentional test/standby signal rather than a black or flat
-    /// frame. Rendered per pixel format and cheaply (row-run fills).
+    private func sendToSource(_ sampleBuffer: CMSampleBuffer) {
+        let pts = sampleBuffer.presentationTimeStamp
+        _sourceStreamSource.stream.send(sampleBuffer, discontinuity: [],
+                                        hostTimeInNanoseconds: hostTimeNanoseconds(pts))
+    }
+
+    /// The standby ("no signal") image (#2): horizontal bands per pixel format.
     private func fillStandbyPattern(_ pixelBuffer: CVPixelBuffer) {
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
 
         switch _activeFormat.pixelFormat {
         case .bgra:
-            // Packed BGRA (little-endian 0xAARRGGBB) colour bands.
             let bands: [UInt32] = [0xFF1E1E24, 0xFF2E5E8C, 0xFF3AA0A0, 0xFF6ABF4B,
                                    0xFFE0B341, 0xFFCF5C36, 0xFFA0405C, 0xFF1E1E24]
             guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
@@ -228,7 +262,6 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
                 memset_pattern4(base + row * rowBytes, &colour, rowBytes)
             }
         case .nv12:
-            // Luma brightness bands + neutral chroma.
             let lumaBands: [UInt8] = [0x20, 0x40, 0x60, 0x80, 0xA0, 0xC0, 0xE0, 0x20]
             if let luma = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) {
                 let rows = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
@@ -240,15 +273,15 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
             if let chroma = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1) {
                 let rows = CVPixelBufferGetHeightOfPlane(pixelBuffer, 1)
                 let rowBytes = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
-                memset(chroma, 0x80, rowBytes * rows) // neutral chroma
+                memset(chroma, 0x80, rowBytes * rows)
             }
         }
     }
 }
 
-// MARK: - Stream Source
+// MARK: - Source Stream Source (camera clients consume)
 
-final class ExtensionStreamSource: NSObject, CMIOExtensionStreamSource {
+final class SourceStreamSource: NSObject, CMIOExtensionStreamSource {
 
     private(set) var stream: CMIOExtensionStream!
     private let _device: CMIOExtensionDevice
@@ -258,19 +291,14 @@ final class ExtensionStreamSource: NSObject, CMIOExtensionStreamSource {
         self._device = device
         self._formats = formatCatalog.formats.map(makeStreamFormat(for:))
         super.init()
-        stream = CMIOExtensionStream(localizedName: localizedName,
-                                     streamID: streamID,
-                                     direction: .source,
-                                     clockType: .hostTime,
-                                     source: self)
+        stream = CMIOExtensionStream(localizedName: localizedName, streamID: streamID,
+                                     direction: .source, clockType: .hostTime, source: self)
     }
 
     var formats: [CMIOExtensionStreamFormat] { _formats }
 
     var activeFormatIndex: Int = 0 {
-        didSet {
-            (_device.source as? ExtensionDeviceSource)?.setActiveFormat(index: activeFormatIndex)
-        }
+        didSet { (_device.source as? ExtensionDeviceSource)?.setActiveFormat(index: activeFormatIndex) }
     }
 
     var availableProperties: Set<CMIOExtensionProperty> {
@@ -278,15 +306,15 @@ final class ExtensionStreamSource: NSObject, CMIOExtensionStreamSource {
     }
 
     func streamProperties(forProperties properties: Set<CMIOExtensionProperty>) throws -> CMIOExtensionStreamProperties {
-        let streamProperties = CMIOExtensionStreamProperties(dictionary: [:])
+        let props = CMIOExtensionStreamProperties(dictionary: [:])
         if properties.contains(.streamActiveFormatIndex) {
-            streamProperties.activeFormatIndex = activeFormatIndex
+            props.activeFormatIndex = activeFormatIndex
         }
         if properties.contains(.streamFrameDuration) {
             let frameRate = formatCatalog.format(at: activeFormatIndex)?.frameRate ?? 30
-            streamProperties.frameDuration = CMTime(value: 1, timescale: Int32(frameRate))
+            props.frameDuration = CMTime(value: 1, timescale: Int32(frameRate))
         }
-        return streamProperties
+        return props
     }
 
     func setStreamProperties(_ streamProperties: CMIOExtensionStreamProperties) throws {
@@ -295,22 +323,93 @@ final class ExtensionStreamSource: NSObject, CMIOExtensionStreamSource {
         }
     }
 
-    func authorizedToStartStream(for client: CMIOExtensionClient) -> Bool {
-        true
-    }
+    func authorizedToStartStream(for client: CMIOExtensionClient) -> Bool { true }
 
     func startStream() throws {
-        guard let deviceSource = _device.source as? ExtensionDeviceSource else {
-            fatalError("Unexpected device source type")
-        }
-        deviceSource.startStreaming()
+        (_device.source as? ExtensionDeviceSource)?.startStreaming()
     }
 
     func stopStream() throws {
-        guard let deviceSource = _device.source as? ExtensionDeviceSource else {
-            fatalError("Unexpected device source type")
+        (_device.source as? ExtensionDeviceSource)?.stopStreaming()
+    }
+}
+
+// MARK: - Sink Stream Source (producer feeds)
+
+/// The producer-facing input. A depth-1 queue makes newer frames overwrite
+/// pending ones (latest-frame-wins / drop-stale). The drain loop hands each
+/// consumed frame to the device, which forwards it on the source stream.
+final class SinkStreamSource: NSObject, CMIOExtensionStreamSource {
+
+    private(set) var stream: CMIOExtensionStream!
+    private let _device: CMIOExtensionDevice
+    private let _formats: [CMIOExtensionStreamFormat]
+    private var _client: CMIOExtensionClient?
+    private var _draining = false
+
+    init(localizedName: String, streamID: UUID, device: CMIOExtensionDevice) {
+        self._device = device
+        self._formats = formatCatalog.formats.map(makeStreamFormat(for:))
+        super.init()
+        stream = CMIOExtensionStream(localizedName: localizedName, streamID: streamID,
+                                     direction: .sink, clockType: .hostTime, source: self)
+    }
+
+    var formats: [CMIOExtensionStreamFormat] { _formats }
+
+    var availableProperties: Set<CMIOExtensionProperty> {
+        [.streamActiveFormatIndex, .streamSinkBufferQueueSize, .streamSinkBuffersRequiredForStartup]
+    }
+
+    func streamProperties(forProperties properties: Set<CMIOExtensionProperty>) throws -> CMIOExtensionStreamProperties {
+        let props = CMIOExtensionStreamProperties(dictionary: [:])
+        if properties.contains(.streamActiveFormatIndex) {
+            props.activeFormatIndex = 0
         }
-        deviceSource.stopStreaming()
+        if properties.contains(.streamSinkBufferQueueSize) {
+            props.sinkBufferQueueSize = 1 // latest-frame-wins
+        }
+        if properties.contains(.streamSinkBuffersRequiredForStartup) {
+            props.sinkBuffersRequiredForStartup = 1
+        }
+        return props
+    }
+
+    func setStreamProperties(_ streamProperties: CMIOExtensionStreamProperties) throws {}
+
+    func authorizedToStartStream(for client: CMIOExtensionClient) -> Bool {
+        _client = client
+        return true
+    }
+
+    func startStream() throws {
+        guard let deviceSource = _device.source as? ExtensionDeviceSource else { return }
+        deviceSource.producerDidStart()
+        _draining = true
+        drain()
+    }
+
+    func stopStream() throws {
+        _draining = false
+        (_device.source as? ExtensionDeviceSource)?.producerDidStop()
+    }
+
+    private func drain() {
+        guard _draining, let client = _client else { return }
+        stream.consumeSampleBuffer(from: client) { [weak self] sampleBuffer, sequenceNumber, _, _, error in
+            guard let self = self else { return }
+            if let sampleBuffer = sampleBuffer {
+                (self._device.source as? ExtensionDeviceSource)?.receiveSinkFrame(sampleBuffer)
+                let output = CMIOExtensionScheduledOutput(
+                    sequenceNumber: sequenceNumber,
+                    hostTimeInNanoseconds: hostTimeNanoseconds(CMClockGetTime(CMClockGetHostTimeClock())))
+                self.stream.notifyScheduledOutputChanged(output)
+            }
+            if let error = error {
+                logger.error("Sink consume error: \(error.localizedDescription, privacy: .public)")
+            }
+            self.drain() // re-arm
+        }
     }
 }
 
@@ -332,27 +431,18 @@ final class ExtensionProviderSource: NSObject, CMIOExtensionProviderSource {
         }
     }
 
-    func connect(to client: CMIOExtensionClient) throws {
-        // The device is always present; no per-client setup required.
-    }
+    func connect(to client: CMIOExtensionClient) throws {}
+    func disconnect(from client: CMIOExtensionClient) {}
 
-    func disconnect(from client: CMIOExtensionClient) {
-        // No per-client teardown required.
-    }
-
-    var availableProperties: Set<CMIOExtensionProperty> {
-        [.providerManufacturer]
-    }
+    var availableProperties: Set<CMIOExtensionProperty> { [.providerManufacturer] }
 
     func providerProperties(forProperties properties: Set<CMIOExtensionProperty>) throws -> CMIOExtensionProviderProperties {
-        let providerProperties = CMIOExtensionProviderProperties(dictionary: [:])
+        let props = CMIOExtensionProviderProperties(dictionary: [:])
         if properties.contains(.providerManufacturer) {
-            providerProperties.manufacturer = "m96-chan"
+            props.manufacturer = "m96-chan"
         }
-        return providerProperties
+        return props
     }
 
-    func setProviderProperties(_ providerProperties: CMIOExtensionProviderProperties) throws {
-        // No writable provider properties yet.
-    }
+    func setProviderProperties(_ providerProperties: CMIOExtensionProviderProperties) throws {}
 }
