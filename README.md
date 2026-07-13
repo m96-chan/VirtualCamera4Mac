@@ -185,8 +185,11 @@ The extension is a **System Extension** and must be signed (Manual signing, team
 systemextensionsctl developer on
 ```
 
-Then run the **VirtualCamera4Mac** app and click **Install / Activate**; approve
-it in **System Settings → General → Login Items & Extensions**. The device then
+Then run the **VirtualCamera4Mac** app — it lives in the **menu bar** (no Dock
+icon). Its menu shows the extension status, the default format, and quick
+actions: **Install / Activate**, **Uninstall**, **Open Login Items &
+Extensions**, and **Quit**. Click **Install / Activate**, then approve it in
+**System Settings → General → Login Items & Extensions**. The device then
 appears to any app using AVFoundation / CoreMediaIO (verify with
 `system_profiler SPCameraDataType` or QuickTime → New Movie Recording).
 

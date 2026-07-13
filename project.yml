@@ -89,6 +89,8 @@ targets:
       properties:
         CFBundleDisplayName: VirtualCamera4Mac
         LSMinimumSystemVersion: "13.0"
+        # Menu bar agent — no Dock icon (#5).
+        LSUIElement: true
         NSSystemExtensionUsageDescription: Installs the VirtualCamera4Mac virtual camera system extension.
     entitlements:
       path: Sources/App/VirtualCamera4Mac.entitlements
