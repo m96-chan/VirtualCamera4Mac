@@ -1,0 +1,81 @@
+# Local one-time signing setup for Developer ID distribution.
+#
+# This does NOT build or release — CI (release.yml) does that. This lane only
+# provisions the Apple assets a Developer ID + notarized release needs:
+#   - the two App IDs, with App Groups (+ System Extension on the app),
+#   - the shared App Group,
+#   - Developer ID provisioning profiles for both targets (macOS).
+#
+# Auth uses an App Store Connect API key. Run it locally:
+#   ASC_KEY_ID=... ASC_ISSUER_ID=... ASC_KEY_P8_BASE64="$(base64 -i AuthKey_XXXX.p8)" \
+#     bundle exec fastlane mac setup_signing
+#
+# The generated profiles land in build/profiles/ (git-ignored); base64-encode
+# them into GitHub secrets per docs/ci-signing.md.
+
+require "base64"
+require "tmpdir"
+require "fileutils"
+
+APP_ID      = "io.github.m96chan.VirtualCamera4Mac".freeze
+EXT_ID      = "io.github.m96chan.VirtualCamera4Mac.Extension".freeze
+TEAM_ID     = "9U26G7YWJ9".freeze
+GROUP_ID    = "9U26G7YWJ9.io.github.m96chan.VirtualCamera4Mac".freeze
+PROFILE_DIR = File.expand_path("../build/profiles", __dir__).freeze
+
+platform :mac do
+  desc "Create/refresh all Developer ID signing assets (App IDs, App Group, profiles)"
+  lane :setup_signing do
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_P8_BASE64"),
+      is_key_content_base64: true,
+      in_house: false
+    )
+
+    # produce/Spaceship logs in via ENV; also drop the .p8 to disk for it.
+    p8_path = File.join(Dir.tmpdir, "asc_authkey.p8")
+    File.write(p8_path, Base64.decode64(ENV.fetch("ASC_KEY_P8_BASE64")))
+    ENV["SPACESHIP_CONNECT_API_KEY_ID"]       = ENV.fetch("ASC_KEY_ID")
+    ENV["SPACESHIP_CONNECT_API_ISSUER_ID"]    = ENV.fetch("ASC_ISSUER_ID")
+    ENV["SPACESHIP_CONNECT_API_KEY_FILEPATH"] = p8_path
+
+    # 1. App IDs with App Groups. System Extension is enabled separately below
+    #    because Apple's API sometimes rejects that capability write.
+    create_app_online(app_identifier: APP_ID, app_name: "VirtualCamera4Mac",
+                      skip_itc: true, team_id: TEAM_ID,
+                      enable_services: { app_group: "on" })
+    create_app_online(app_identifier: EXT_ID, app_name: "VirtualCamera4Mac Extension",
+                      skip_itc: true, team_id: TEAM_ID,
+                      enable_services: { app_group: "on" })
+
+    # 2. System Extension capability on the container app (best-effort).
+    begin
+      sh("bundle", "exec", "fastlane", "produce", "enable_services",
+         "--app_identifier", APP_ID, "--team_id", TEAM_ID, "--system_extension", "on")
+    rescue => e
+      UI.important("Could not enable the System Extension capability via the API: #{e.message}")
+      UI.important("Enable it manually: developer.apple.com → Identifiers → #{APP_ID} → System Extension → Save")
+    end
+
+    # 3. App Group + associations (produce has no first-class Fastfile actions).
+    sh("bundle", "exec", "fastlane", "produce", "group",
+       "--group_identifier", GROUP_ID, "--group_name", "VirtualCamera4Mac App Group",
+       "--team_id", TEAM_ID)
+    [APP_ID, EXT_ID].each do |bundle_id|
+      sh("bundle", "exec", "fastlane", "produce", "associate_group",
+         "--app_identifier", bundle_id, "--team_id", TEAM_ID, GROUP_ID)
+    end
+
+    # 4. Developer ID provisioning profiles (macOS) for both targets.
+    FileUtils.mkdir_p(PROFILE_DIR)
+    get_provisioning_profile(platform: "macos", developer_id: true,
+                             app_identifier: APP_ID, output_path: PROFILE_DIR, api_key: api_key)
+    get_provisioning_profile(platform: "macos", developer_id: true,
+                             app_identifier: EXT_ID, output_path: PROFILE_DIR, api_key: api_key)
+
+    UI.success("Signing assets ready. Profiles in #{PROFILE_DIR}")
+    UI.message("Next: base64-encode the profiles + your Developer ID .p12 into GitHub secrets (docs/ci-signing.md).")
+  end
+end
