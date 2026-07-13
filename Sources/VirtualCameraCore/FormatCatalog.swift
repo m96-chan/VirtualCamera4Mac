@@ -1,8 +1,10 @@
-/// The set of formats the device advertises, with a well-defined default.
+/// The set of formats the device advertises, with a well-defined default and
+/// bounds-checked lookup used by the stream source (issue #3).
 ///
-/// For issue #1 the catalog only needs a sane default that is available even
-/// when no producer is connected. The advertised matrix is expanded by #3
-/// (format negotiation).
+/// The consumer app selects a format by index (`activeFormatIndex`); invalid
+/// selections clamp to the default rather than crash or blank the stream.
+/// Producer-side format negotiation/conversion arrives with the producer
+/// transport (#4).
 public struct FormatCatalog: Sendable, Equatable {
     public let formats: [CameraFormat]
 
@@ -19,8 +21,28 @@ public struct FormatCatalog: Sendable, Equatable {
         self.formats = formats
     }
 
-    /// The baseline catalog: 720p BGRA @ 30fps, available without a producer.
+    /// The format at `index`, or `nil` if out of range.
+    public func format(at index: Int) -> CameraFormat? {
+        formats.indices.contains(index) ? formats[index] : nil
+    }
+
+    /// The index of the first matching format, or `nil` if not advertised.
+    public func firstIndex(of format: CameraFormat) -> Int? {
+        formats.firstIndex(of: format)
+    }
+
+    /// A valid index for the requested selection: `requested` if in range,
+    /// otherwise the default index (0).
+    public func resolvedIndex(for requested: Int) -> Int {
+        formats.indices.contains(requested) ? requested : 0
+    }
+
+    /// The baseline catalog: 720p and 1080p, each in BGRA and NV12, at 30fps.
+    /// Index 0 (720p BGRA) is the default, available without a producer.
     public static let standard = FormatCatalog(formats: [
-        CameraFormat(width: 1280, height: 720, pixelFormat: .bgra, frameRate: 30)
+        CameraFormat(width: 1280, height: 720, pixelFormat: .bgra, frameRate: 30),
+        CameraFormat(width: 1280, height: 720, pixelFormat: .nv12, frameRate: 30),
+        CameraFormat(width: 1920, height: 1080, pixelFormat: .bgra, frameRate: 30),
+        CameraFormat(width: 1920, height: 1080, pixelFormat: .nv12, frameRate: 30),
     ])
 }
