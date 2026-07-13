@@ -69,8 +69,10 @@ Under **Settings → Secrets and variables → Actions**:
 | `PROVISIONING_PROFILE_NAME_APP` | `VirtualCamera4Mac Developer ID` | set |
 | `PROVISIONING_PROFILE_NAME_EXT` | `VirtualCamera4Mac Extension Developer ID` | set |
 | `KEYCHAIN_PASSWORD` | any random string (temp keychain) | set |
-| `BUILD_CERTIFICATE_BASE64` | `base64 -i DeveloperID.p12` | **TODO** |
-| `P12_PASSWORD` | the `.p12` export password | **TODO** |
+| `BUILD_CERTIFICATE_BASE64` | `base64 -i DeveloperID.p12` | set |
+| `P12_PASSWORD` | the `.p12` export password | set |
+
+All secrets are populated; `v0.0.1` shipped a signed + notarized release.
 
 The `ASC_*` secrets are reused by the release workflow to notarize
 (`notarytool --key`), so no Apple ID / app-specific password is needed.
