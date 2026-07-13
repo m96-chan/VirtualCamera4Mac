@@ -1,5 +1,7 @@
 # VirtualCamera4Mac
 
+[![CI](https://github.com/m96-chan/VirtualCamera4Mac/actions/workflows/ci.yml/badge.svg)](https://github.com/m96-chan/VirtualCamera4Mac/actions/workflows/ci.yml)
+
 A native virtual camera for macOS. VirtualCamera4Mac registers a system-wide
 camera device that any application — Zoom, Google Meet, OBS, QuickTime, Discord,
 Safari/Chrome WebRTC — can select as if it were a physical webcam. Frames are
@@ -187,6 +189,16 @@ Then run the **VirtualCamera4Mac** app and click **Install / Activate**; approve
 it in **System Settings → General → Login Items & Extensions**. The device then
 appears to any app using AVFoundation / CoreMediaIO (verify with
 `system_profiler SPCameraDataType` or QuickTime → New Movie Recording).
+
+## Continuous integration
+
+- **CI** (`.github/workflows/ci.yml`) — on every PR and `main` push: runs the
+  core unit tests and an unsigned compile check of the app + extension. No
+  secrets required.
+- **Release** (`.github/workflows/release.yml`) — on `v*` tags: signed
+  (Developer ID, Manual) build, notarization, stapling, and a GitHub Release.
+  Setup and required secrets are documented in
+  [`docs/ci-signing.md`](docs/ci-signing.md).
 
 ## Roadmap
 

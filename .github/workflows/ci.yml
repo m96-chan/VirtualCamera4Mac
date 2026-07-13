@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Test & compile-verify (unsigned)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Run core unit tests (no signing required)
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project VirtualCamera4Mac.xcodeproj \
+            -scheme VirtualCameraCore \
+            -destination 'platform=macOS' \
+            -enableCodeCoverage YES \
+            -resultBundlePath "$RUNNER_TEMP/CoreTests.xcresult"
+
+      - name: Report coverage
+        run: |
+          xcrun xccov view --report --only-targets "$RUNNER_TEMP/CoreTests.xcresult" || true
+
+      - name: Compile-verify app + Camera Extension (signing disabled)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project VirtualCamera4Mac.xcodeproj \
+            -scheme VirtualCamera4Mac \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO
