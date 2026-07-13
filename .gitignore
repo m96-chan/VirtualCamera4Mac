@@ -13,6 +13,7 @@ xcuserdata/
 .DS_Store
 
 # Signing material — NEVER commit these
+/sign/
 *.p8
 *.p12
 *.cer

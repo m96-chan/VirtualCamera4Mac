@@ -3,92 +3,94 @@
 The [`Release`](../.github/workflows/release.yml) workflow builds a signed,
 notarized app on version tags (`v*`). It uses **Manual** code signing with team
 `9U26G7YWJ9` (Developer ID), fed entirely from repository secrets. The
-[`CI`](../.github/workflows/ci.yml) workflow needs **no** secrets — it only runs
-tests and an unsigned compile check.
+[`CI`](../.github/workflows/ci.yml) workflow needs **no** secrets.
 
 Signing runs only on tags / manual dispatch, never on pull requests, so secrets
 are never exposed to untrusted PRs.
 
-Apple signing assets are provisioned with **fastlane** (see `fastlane/Fastfile`),
-authenticated by an **App Store Connect API key**.
+Apple signing assets are provisioned with **fastlane** (`fastlane/Fastfile`),
+authenticated by an **App Store Connect API key** via `Spaceship::ConnectAPI`.
+(The `produce` tool is intentionally not used — it does not support API-key auth.)
 
-## 1. Create an App Store Connect API key
+## 1. Install fastlane
 
-App Store Connect → **Users and Access → Integrations → App Store Connect API** →
-generate a key with **Developer** access (or higher). Note the **Key ID** and
-**Issuer ID**, and download the `AuthKey_XXXX.p8` once (it cannot be re-downloaded).
-
-## 2. Provision Apple assets with fastlane
-
-Installs the App IDs, App Group, and Developer ID provisioning profiles:
+The macOS system Ruby (2.6) cannot build fastlane's native gems, so use the
+self-contained Homebrew build:
 
 ```bash
-bundle install
+brew install fastlane
+```
+
+## 2. Create an App Store Connect API key
+
+App Store Connect → **Users and Access → Integrations → App Store Connect API** →
+generate a key with **Developer** access. Note the **Key ID** and **Issuer ID**,
+and download `AuthKey_XXXX.p8` (downloadable once).
+
+## 3. Provision Apple assets
+
+```bash
 ASC_KEY_ID=XXXXXXXXXX \
 ASC_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
 ASC_KEY_P8_BASE64="$(base64 -i AuthKey_XXXXXXXXXX.p8)" \
-  bundle exec fastlane mac setup_signing
+  fastlane mac setup_signing
 ```
 
-This creates/refreshes:
-- App IDs `io.github.m96chan.VirtualCamera4Mac` and `…​.Extension` (App Groups on both);
-- the App Group `9U26G7YWJ9.io.github.m96chan.VirtualCamera4Mac`, associated with both;
-- Developer ID provisioning profiles for both targets, written to `build/profiles/`.
+The `setup_signing` lane:
+- creates the App IDs `io.github.m96chan.VirtualCamera4Mac` and `…​.Extension`
+  (macOS) if missing;
+- enables the **App Groups** and **System Extension** capabilities (the app id
+  gets both; the extension gets App Groups);
+- creates Developer ID provisioning profiles named **`VirtualCamera4Mac Developer
+  ID`** and **`VirtualCamera4Mac Extension Developer ID`** into `build/profiles/`.
 
-> **System Extension capability:** the lane tries to enable it via the API. If
-> Apple rejects that write, enable it manually: developer.apple.com → Identifiers
-> → `io.github.m96chan.VirtualCamera4Mac` → **System Extension** → Save, then
-> re-run the lane so the profile picks it up.
+The Developer ID profiles carry a wildcard app group (`9U26G7YWJ9.*`), so the
+shared group `9U26G7YWJ9.io.github.m96chan.VirtualCamera4Mac` needs no separate
+registration.
 
-## 3. Export the Developer ID certificate
+## 4. Export the Developer ID certificate
 
 fastlane can't export an existing private key, so do this once by hand:
 Keychain Access → **Developer ID Application: Yusuke Harada (9U26G7YWJ9)** →
 right-click → **Export** → `.p12` (set a password).
 
-## 4. Repository secrets
+## 5. Repository secrets
 
-Add these under **Settings → Secrets and variables → Actions** (`APPLE_TEAM_ID`
-is already set):
+Under **Settings → Secrets and variables → Actions**:
 
-| Secret | Value |
-|---|---|
-| `BUILD_CERTIFICATE_BASE64` | `base64 -i DeveloperID.p12 \| pbcopy` |
-| `P12_PASSWORD` | password you set when exporting the `.p12` |
-| `KEYCHAIN_PASSWORD` | any random string (temp keychain password) |
-| `PROVISIONING_PROFILE_APP_BASE64` | `base64 -i build/profiles/<app>.provisionprofile \| pbcopy` |
-| `PROVISIONING_PROFILE_EXT_BASE64` | `base64 -i build/profiles/<ext>.provisionprofile \| pbcopy` |
-| `PROVISIONING_PROFILE_NAME_APP` | the app profile's exact name |
-| `PROVISIONING_PROFILE_NAME_EXT` | the extension profile's exact name |
-| `APPLE_TEAM_ID` | `9U26G7YWJ9` (already set) |
-| `ASC_KEY_ID` | App Store Connect API **Key ID** |
-| `ASC_ISSUER_ID` | App Store Connect API **Issuer ID** |
-| `ASC_KEY_P8_BASE64` | `base64 -i AuthKey_XXXX.p8 \| pbcopy` |
+| Secret | Value | Status |
+|---|---|---|
+| `APPLE_TEAM_ID` | `9U26G7YWJ9` | set |
+| `ASC_KEY_ID` | App Store Connect API **Key ID** | set |
+| `ASC_ISSUER_ID` | App Store Connect API **Issuer ID** | set |
+| `ASC_KEY_P8_BASE64` | `base64 -i AuthKey_XXXX.p8` | set |
+| `PROVISIONING_PROFILE_APP_BASE64` | `base64 -i build/profiles/Direct_io.github.m96chan.VirtualCamera4Mac.provisionprofile` | set |
+| `PROVISIONING_PROFILE_EXT_BASE64` | `base64 -i build/profiles/Direct_io.github.m96chan.VirtualCamera4Mac.Extension.provisionprofile` | set |
+| `PROVISIONING_PROFILE_NAME_APP` | `VirtualCamera4Mac Developer ID` | set |
+| `PROVISIONING_PROFILE_NAME_EXT` | `VirtualCamera4Mac Extension Developer ID` | set |
+| `KEYCHAIN_PASSWORD` | any random string (temp keychain) | set |
+| `BUILD_CERTIFICATE_BASE64` | `base64 -i DeveloperID.p12` | **TODO** |
+| `P12_PASSWORD` | the `.p12` export password | **TODO** |
 
 The `ASC_*` secrets are reused by the release workflow to notarize
 (`notarytool --key`), so no Apple ID / app-specific password is needed.
 
-`base64` on macOS: `base64 -i <file>` prints the encoded string (pipe to
-`pbcopy` to copy it).
-
-## 5. Cut a release
+## 6. Cut a release
 
 ```bash
 git tag v0.0.1
 git push origin v0.0.1
 ```
 
-The workflow archives, exports with Developer ID, notarizes with the API key
-(`notarytool --wait`), staples, and attaches `VirtualCamera4Mac.zip` to a GitHub
-Release. You can also trigger it manually from the Actions tab (**Run workflow**).
+The workflow archives, exports (Developer ID, manual), notarizes with the API
+key (`notarytool --wait`), staples, and attaches `VirtualCamera4Mac.zip` to a
+GitHub Release. It can also be run manually from the Actions tab.
 
-## Notes / not yet verified
+## Notes
 
-- The release workflow has **not** been run end-to-end yet — it is gated on the
-  steps above. Expect to iterate on the first tagged build, especially the
-  `archive`/`-exportArchive` provisioning-profile matching for the System
-  Extension (the most common first-run failure point).
-- Provisioning-profile names must match the `PROVISIONING_PROFILE_NAME_*` secrets
-  exactly (used in `ExportOptions.plist`).
+- The provisioning-profile names must match the `PROVISIONING_PROFILE_NAME_*`
+  secrets exactly (used in `ExportOptions.plist`).
+- The release path has not yet been run end to end — expect to iterate on the
+  first tag, especially `archive`/`-exportArchive` for the System Extension.
 - Distribution outside the App Store requires Developer ID signing **and**
   notarization for the System Extension to load on other machines.
