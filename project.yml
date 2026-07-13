@@ -53,6 +53,10 @@ targets:
       path: Sources/Extension/Info.plist
       properties:
         CFBundleDisplayName: VirtualCamera4Mac Extension
+        # Required for macOS to recognize this bundle as a System Extension.
+        # XcodeGen's system-extension type does not add it; without SYSX,
+        # OSSystemExtensionManager reports "Extension not found in App bundle".
+        CFBundlePackageType: SYSX
         # Required by CoreMediaIO; must be prefixed by the team identifier.
         CMIOExtension:
           CMIOExtensionMachServiceName: $(TeamIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)
