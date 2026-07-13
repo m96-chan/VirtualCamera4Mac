@@ -35,7 +35,8 @@ jobs:
             -scheme VirtualCameraCore \
             -destination 'platform=macOS' \
             -enableCodeCoverage YES \
-            -resultBundlePath "$RUNNER_TEMP/CoreTests.xcresult"
+            -resultBundlePath "$RUNNER_TEMP/CoreTests.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Report coverage
         run: |
