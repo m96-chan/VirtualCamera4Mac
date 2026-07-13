@@ -34,4 +34,16 @@ public struct CameraFormat: Sendable, Equatable {
     public var label: String {
         "\(width)x\(height) \(pixelFormat.name) \(frameRate)fps"
     }
+
+    /// Whether the pixel dimensions are valid for the pixel format. NV12 is
+    /// biplanar 4:2:0, so its width and height must both be even; BGRA has no
+    /// such constraint. Used to validate producer frames on the sink (#4).
+    public var hasValidPixelDimensions: Bool {
+        switch pixelFormat {
+        case .bgra:
+            return width > 0 && height > 0
+        case .nv12:
+            return width > 0 && height > 0 && width % 2 == 0 && height % 2 == 0
+        }
+    }
 }

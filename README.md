@@ -82,23 +82,29 @@ releases without private APIs or SIP workarounds.
 The two repos talk over a versioned IPC contract so they can ship
 independently.
 
-- **Transport:** `IOSurface`-backed frames handed across processes via **XPC**
-  (surface passed by Mach send-right; no per-frame pixel copy). A local Unix
-  domain socket is the fallback for producers that cannot adopt XPC.
-- **Frame format:** BGRA / NV12 to start; format is negotiated at connect time.
-- **Metadata per frame:** presentation timestamp, width/height, pixel format,
-  rotation, and mirror flag.
-- **Discovery:** the container app exposes a well-known Mach service name;
-  AvataCam connects, negotiates a format, then streams.
+- **Transport:** a **CMIO sink stream**. A CMIO *System Extension* cannot host
+  an inbound XPC/Mach listener and App Groups do not bridge to it (it runs as a
+  different user), so the Apple-supported path — used by OBS's virtual camera —
+  is for the extension to publish a `.sink` stream that the producer feeds.
+  CoreMediaIO moves the frame's `IOSurface` across the process boundary, so it
+  stays **zero-copy** without any hand-rolled XPC.
+- **Producer side:** discover the device by its `kCMIODevicePropertyDeviceUID`,
+  get the sink's buffer queue (`CMIOStreamCopyBufferQueue`) and enqueue
+  IOSurface-backed `CMSampleBuffer`s (`CMSimpleQueueEnqueue`).
+- **Latest-frame-wins:** the sink uses a depth-1 queue, so a newer frame
+  overwrites a pending one; the extension always forwards the freshest frame and
+  falls back to the standby image when the producer is absent or stalled.
+- **Frame format:** BGRA / NV12; the consumer selects from the advertised matrix.
+- **Note:** the sink is open to any local producer (CMIO does not gate the
+  feeder's identity); a token gate can restrict it to AvataCam later.
 
-A minimal producer loop looks like:
+The ergonomic producer SDK is tracked separately; a producer conceptually does:
 
 ```swift
-let camera = try VirtualCamera.connect()            // find the running device
-let format = try camera.negotiate(.bgra, 1280, 720, fps: 30)
+let sink = try VirtualCameraSink.discover()          // find the device's sink stream
+try sink.negotiate(.bgra, 1280, 720, fps: 30)
 while running {
-    let surface = renderer.nextFrame()              // IOSurface from AvataCam
-    camera.send(surface, pts: clock.now)
+    sink.enqueue(renderer.nextFrame())               // IOSurface-backed CVPixelBuffer
 }
 ```
 
@@ -211,8 +217,8 @@ appears to any app using AVFoundation / CoreMediaIO (verify with
 - [x] Format negotiation — advertises **720p / 1080p × BGRA / NV12 @ 30fps**; the
   consumer app selects a format (invalid selections clamp to the default).
 - [x] Notarized Developer ID release (`v0.0.1`).
-- [ ] XPC + `IOSurface` frame transport.
-- [ ] Producer SDK and versioned IPC protocol doc.
+- [x] CMIO **sink stream** frame transport (extension endpoint; zero-copy IOSurface, latest-frame-wins, standby fallback).
+- [ ] Producer SDK (discover sink + enqueue) and versioned protocol doc.
 - [ ] AvataCam reference integration.
 - [ ] Signed installer — notarized `.dmg` + Homebrew tap.
 
