@@ -133,22 +133,39 @@ Decision, in short:
 
 ## Requirements
 
-- macOS 13 (Ventura) or later — recommended for the mature Camera Extension API.
-- Xcode 15+.
+- macOS 13 (Ventura) or later — deployment target; recommended for the mature
+  Camera Extension API.
+- Xcode 16+ (developed against Xcode 26).
+- [XcodeGen](https://github.com/yonatankoren/XcodeGen) — the Xcode project is
+  generated from `project.yml` (the `.xcodeproj` is not committed):
+  `brew install xcodegen`.
 - An Apple Developer account for the System Extension and Camera entitlements
-  (required for signing/notarization; local development can use a personal team).
+  (required only to build/run the signed extension; the pure core and its unit
+  tests build without signing).
 
-## Building
+## Project layout
 
-> Build instructions will land with the first scaffold. Planned flow:
+- `project.yml` — XcodeGen spec (source of truth for the Xcode project).
+- `Sources/VirtualCameraCore/` — pure-Swift, dependency-free core (device
+  lifecycle, stream state machine, format catalog). Unit-tested in isolation.
+- `Tests/VirtualCameraCoreTests/` — [swift-testing](https://github.com/swiftlang/swift-testing) unit tests.
+
+## Building & testing
 
 ```bash
-cd VirtualCamera4Mac
-open VirtualCamera4Mac.xcodeproj   # build & run the container app to install the extension
+xcodegen generate        # regenerate VirtualCamera4Mac.xcodeproj from project.yml
+
+# Run the core unit tests (no signing / Team ID required):
+xcodebuild test \
+  -project VirtualCamera4Mac.xcodeproj \
+  -scheme VirtualCameraCore \
+  -destination 'platform=macOS' \
+  -enableCodeCoverage YES
 ```
 
-The container app requests System Extension activation on first launch; approve
-it in **System Settings → General → Login Items & Extensions**.
+The container app + Camera Extension targets (which request System Extension
+activation on first launch, approved in **System Settings → General → Login
+Items & Extensions**) require code signing and are added in a later phase.
 
 ## Roadmap
 

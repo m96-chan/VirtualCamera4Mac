@@ -1,0 +1,51 @@
+name: VirtualCamera4Mac
+options:
+  bundleIdPrefix: io.github.m96chan
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+  minimumXcodeGenVersion: "2.45.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    GENERATE_INFOPLIST_FILE: "YES"
+    # Phase A does not require a Development Team. Ad-hoc sign locally so the
+    # framework and unit-test bundle build and run without signing credentials.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  VirtualCameraCore:
+    type: framework
+    platform: macOS
+    sources:
+      - Sources/VirtualCameraCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.m96chan.VirtualCameraCore
+
+  VirtualCameraCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/VirtualCameraCoreTests
+    dependencies:
+      - target: VirtualCameraCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.m96chan.VirtualCameraCoreTests
+
+schemes:
+  VirtualCameraCore:
+    build:
+      targets:
+        VirtualCameraCore: all
+        VirtualCameraCoreTests: [test]
+    test:
+      gatherCoverageData: true
+      coverageTargets:
+        - VirtualCameraCore
+      targets:
+        - VirtualCameraCoreTests
