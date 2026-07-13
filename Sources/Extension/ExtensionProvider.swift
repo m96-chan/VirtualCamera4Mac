@@ -7,6 +7,13 @@ import VirtualCameraCore
 private let logger = Logger(subsystem: "io.github.m96chan.VirtualCamera4Mac.Extension",
                             category: "Extension")
 
+extension CMIOExtensionProperty {
+    /// Custom device property carrying the packed `FrameTransform` (#6). The
+    /// container app sets it via CoreMediaIO (selector `xfrm`, global scope,
+    /// main element); the extension applies it to outgoing frames.
+    static let outputTransform = CMIOExtensionProperty(rawValue: "4cc_xfrm_glob_0000")
+}
+
 /// The advertised format matrix, sourced from the pure core (issue #3).
 private let formatCatalog = FormatCatalog.standard
 
@@ -70,6 +77,10 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
     private var _latestSinkBuffer: CMSampleBuffer?
     private var _lastSinkHostTimeSeconds: Double?
 
+    // Output transform (#6), set by the app via the custom CMIO property and
+    // read/applied on `_timerQueue` in the source loop.
+    private var _transform: FrameTransform = .identity
+
     init(localizedName: String) {
         super.init()
 
@@ -122,7 +133,7 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
     }
 
     var availableProperties: Set<CMIOExtensionProperty> {
-        [.deviceTransportType, .deviceModel]
+        [.deviceTransportType, .deviceModel, .outputTransform]
     }
 
     func deviceProperties(forProperties properties: Set<CMIOExtensionProperty>) throws -> CMIOExtensionDeviceProperties {
@@ -133,10 +144,23 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
         if properties.contains(.deviceModel) {
             deviceProperties.model = "VirtualCamera4Mac"
         }
+        if properties.contains(.outputTransform) {
+            let packed = _timerQueue.sync { _transform.packed }
+            deviceProperties.setPropertyState(
+                CMIOExtensionPropertyState(value: NSNumber(value: packed)),
+                forProperty: .outputTransform)
+        }
         return deviceProperties
     }
 
-    func setDeviceProperties(_ deviceProperties: CMIOExtensionDeviceProperties) throws {}
+    func setDeviceProperties(_ deviceProperties: CMIOExtensionDeviceProperties) throws {
+        if let state = deviceProperties.propertiesDictionary[.outputTransform],
+           let number = state.value as? NSNumber {
+            let transform = FrameTransform(packed: number.int32Value)
+            _timerQueue.async { self._transform = transform }
+            logger.log("Output transform -> rotation \(transform.rotation.rawValue, privacy: .public), mirror \(transform.mirroredHorizontally, privacy: .public), flip \(transform.flippedVertically, privacy: .public)")
+        }
+    }
 
     // MARK: Producer (sink) frames — called from the sink drain loop.
 
@@ -193,13 +217,45 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
         switch state {
         case .live:
             if let buffer = _latestSinkBuffer {
-                sendToSource(retimed(buffer))
+                sendLive(buffer)
             } else {
                 emitStandby()
             }
         case .waitingForProducer, .error:
             emitStandby()
         }
+    }
+
+    /// Forwards a live producer frame, applying the output transform (#6) when
+    /// one is set. The transform is size-preserving, so it reuses the active
+    /// format's buffer pool and description; any failure falls back to the
+    /// untransformed frame rather than blanking the stream.
+    private func sendLive(_ buffer: CMSampleBuffer) {
+        guard !_transform.isIdentity,
+              let source = CMSampleBufferGetImageBuffer(buffer),
+              let transformed = FrameTransformApplier.apply(_transform, to: source, pool: _bufferPool),
+              let sample = makeSampleBuffer(from: transformed) else {
+            sendToSource(retimed(buffer))
+            return
+        }
+        sendToSource(sample)
+    }
+
+    /// Wraps a pixel buffer in a host-timed sample buffer using the active
+    /// format description.
+    private func makeSampleBuffer(from pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
+        var timingInfo = CMSampleTimingInfo()
+        timingInfo.presentationTimeStamp = CMClockGetTime(CMClockGetHostTimeClock())
+        var sampleBufferOut: CMSampleBuffer?
+        let sbErr = CMSampleBufferCreateForImageBuffer(
+            allocator: kCFAllocatorDefault, imageBuffer: pixelBuffer, dataReady: true,
+            makeDataReadyCallback: nil, refcon: nil, formatDescription: _videoDescription,
+            sampleTiming: &timingInfo, sampleBufferOut: &sampleBufferOut)
+        guard sbErr == noErr, let sampleBuffer = sampleBufferOut else {
+            logger.error("Failed to create sample buffer: \(sbErr, privacy: .public)")
+            return nil
+        }
+        return sampleBuffer
     }
 
     private func retimed(_ buffer: CMSampleBuffer) -> CMSampleBuffer {
@@ -225,18 +281,9 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
         }
         fillStandbyPattern(pixelBuffer)
 
-        var timingInfo = CMSampleTimingInfo()
-        timingInfo.presentationTimeStamp = CMClockGetTime(CMClockGetHostTimeClock())
-        var sampleBufferOut: CMSampleBuffer?
-        let sbErr = CMSampleBufferCreateForImageBuffer(
-            allocator: kCFAllocatorDefault, imageBuffer: pixelBuffer, dataReady: true,
-            makeDataReadyCallback: nil, refcon: nil, formatDescription: _videoDescription,
-            sampleTiming: &timingInfo, sampleBufferOut: &sampleBufferOut)
-        guard sbErr == noErr, let sampleBuffer = sampleBufferOut else {
-            logger.error("Failed to create sample buffer: \(sbErr, privacy: .public)")
-            return
+        if let sampleBuffer = makeSampleBuffer(from: pixelBuffer) {
+            sendToSource(sampleBuffer)
         }
-        sendToSource(sampleBuffer)
     }
 
     private func sendToSource(_ sampleBuffer: CMSampleBuffer) {

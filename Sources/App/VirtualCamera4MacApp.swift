@@ -5,10 +5,12 @@ import VirtualCameraCore
 @main
 struct VirtualCamera4MacApp: App {
     @StateObject private var extensionManager = SystemExtensionManager()
+    @StateObject private var transform = OutputTransformController()
 
     var body: some Scene {
         MenuBarExtra("VirtualCamera4Mac", systemImage: extensionManager.status.systemImage) {
-            MenuContent(extensionManager: extensionManager)
+            MenuContent(extensionManager: extensionManager, transform: transform)
+                .onAppear { transform.reapply() }
         }
         .menuBarExtraStyle(.menu)
     }
@@ -16,6 +18,7 @@ struct VirtualCamera4MacApp: App {
 
 struct MenuContent: View {
     @ObservedObject var extensionManager: SystemExtensionManager
+    @ObservedObject var transform: OutputTransformController
 
     private var defaultFormatLabel: String {
         FormatCatalog.standard.defaultFormat.label
@@ -25,6 +28,12 @@ struct MenuContent: View {
         Text("VirtualCamera4Mac")
         Text(extensionManager.status.message)
         Text("Default format: \(defaultFormatLabel)")
+
+        Divider()
+
+        Toggle("Mirror (horizontal)", isOn: $transform.mirrored)
+        Toggle("Flip (vertical)", isOn: $transform.flippedVertically)
+        Toggle("Rotate 180°", isOn: $transform.rotated180)
 
         Divider()
 
