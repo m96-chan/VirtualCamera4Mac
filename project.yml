@@ -70,6 +70,11 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.m96chan.VirtualCamera4Mac.Extension
+        # A System Extension's product (bundle + executable) must be named after
+        # its bundle identifier — Xcode's system-extension template sets this;
+        # without it the executable is the target name and activation fails with
+        # "Extension not found in App bundle".
+        PRODUCT_NAME: "$(PRODUCT_BUNDLE_IDENTIFIER)"
         # Swift 5 language mode: the CMIO callback/timer code is not written for
         # Swift 6 strict concurrency. Core stays on Swift 6.
         SWIFT_VERSION: "5.0"
