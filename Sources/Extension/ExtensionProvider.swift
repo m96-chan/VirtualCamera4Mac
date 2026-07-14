@@ -80,6 +80,11 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
     // Output transform (#6), set by the app via the custom CMIO property and
     // read/applied on `_timerQueue` in the source loop.
     private var _transform: FrameTransform = .identity
+    // A pool sized to the *producer* frame (not the active format), since live
+    // frames are forwarded at the producer's resolution. Rebuilt when the
+    // producer's dimensions/format change. Both accessed only on `_timerQueue`.
+    private var _transformPool: CVPixelBufferPool?
+    private var _transformPoolKey: (width: Int, height: Int, format: OSType) = (0, 0, 0)
 
     init(localizedName: String) {
         super.init()
@@ -227,13 +232,15 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
     }
 
     /// Forwards a live producer frame, applying the output transform (#6) when
-    /// one is set. The transform is size-preserving, so it reuses the active
-    /// format's buffer pool and description; any failure falls back to the
-    /// untransformed frame rather than blanking the stream.
+    /// one is set. The transform is size-preserving; its output buffer must
+    /// match the *producer* frame (which is forwarded verbatim on the identity
+    /// path), not the active format — those can differ. Any failure falls back
+    /// to the untransformed frame rather than blanking the stream.
     private func sendLive(_ buffer: CMSampleBuffer) {
         guard !_transform.isIdentity,
               let source = CMSampleBufferGetImageBuffer(buffer),
-              let transformed = FrameTransformApplier.apply(_transform, to: source, pool: _bufferPool),
+              let pool = transformPool(matching: source),
+              let transformed = FrameTransformApplier.apply(_transform, to: source, pool: pool),
               let sample = makeSampleBuffer(from: transformed) else {
             sendToSource(retimed(buffer))
             return
@@ -241,15 +248,43 @@ final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
         sendToSource(sample)
     }
 
-    /// Wraps a pixel buffer in a host-timed sample buffer using the active
-    /// format description.
+    /// A pixel-buffer pool matching `source`'s dimensions and pixel format,
+    /// rebuilt only when those change. Runs on `_timerQueue`.
+    private func transformPool(matching source: CVPixelBuffer) -> CVPixelBufferPool? {
+        let key = (width: CVPixelBufferGetWidth(source),
+                   height: CVPixelBufferGetHeight(source),
+                   format: CVPixelBufferGetPixelFormatType(source))
+        if _transformPool == nil || _transformPoolKey != key {
+            let attributes: NSDictionary = [
+                kCVPixelBufferWidthKey: key.width,
+                kCVPixelBufferHeightKey: key.height,
+                kCVPixelBufferPixelFormatTypeKey: key.format,
+                kCVPixelBufferIOSurfacePropertiesKey: [:] as NSDictionary
+            ]
+            var pool: CVPixelBufferPool?
+            CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attributes, &pool)
+            _transformPool = pool
+            _transformPoolKey = key
+        }
+        return _transformPool
+    }
+
+    /// Wraps a pixel buffer in a host-timed sample buffer, deriving the format
+    /// description from the buffer itself so it stays correct whether the buffer
+    /// is the active-format standby image or a producer-sized transformed frame.
     private func makeSampleBuffer(from pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
+        var formatDescription: CMFormatDescription?
+        CMVideoFormatDescriptionCreateForImageBuffer(
+            allocator: kCFAllocatorDefault, imageBuffer: pixelBuffer,
+            formatDescriptionOut: &formatDescription)
+        guard let formatDescription else { return nil }
+
         var timingInfo = CMSampleTimingInfo()
         timingInfo.presentationTimeStamp = CMClockGetTime(CMClockGetHostTimeClock())
         var sampleBufferOut: CMSampleBuffer?
         let sbErr = CMSampleBufferCreateForImageBuffer(
             allocator: kCFAllocatorDefault, imageBuffer: pixelBuffer, dataReady: true,
-            makeDataReadyCallback: nil, refcon: nil, formatDescription: _videoDescription,
+            makeDataReadyCallback: nil, refcon: nil, formatDescription: formatDescription,
             sampleTiming: &timingInfo, sampleBufferOut: &sampleBufferOut)
         guard sbErr == noErr, let sampleBuffer = sampleBufferOut else {
             logger.error("Failed to create sample buffer: \(sbErr, privacy: .public)")
