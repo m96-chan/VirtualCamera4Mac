@@ -57,9 +57,14 @@ final class OutputTransformController: ObservableObject {
             mSelector: Self.transformSelector,
             mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
             mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
-        var value = transform.packed
+        // Custom CMIO extension properties are exchanged as a CFType (here a
+        // CFNumber), not a raw scalar — sending raw Int32 bytes fails with
+        // kCMIOHardwareBadPropertySizeError.
+        var packed = transform.packed
+        guard let number = CFNumberCreate(kCFAllocatorDefault, .sInt32Type, &packed) else { return }
+        var value: CFTypeRef = number
         CMIOObjectSetPropertyData(device, &address, 0, nil,
-                                  UInt32(MemoryLayout<Int32>.size), &value)
+                                  UInt32(MemoryLayout<CFTypeRef>.size), &value)
     }
 
     /// FourCharCode `'xfrm'`, matching the extension's custom property raw value
