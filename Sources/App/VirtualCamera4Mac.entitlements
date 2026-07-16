@@ -10,5 +10,7 @@
 	<array>
 		<string>$(TeamIdentifierPrefix)io.github.m96chan.VirtualCamera4Mac</string>
 	</array>
+	<key>com.apple.security.device.camera</key>
+	<true/>
 </dict>
 </plist>

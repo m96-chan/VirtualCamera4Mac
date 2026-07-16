@@ -107,11 +107,22 @@ targets:
         # Menu bar agent — no Dock icon (#5).
         LSUIElement: true
         NSSystemExtensionUsageDescription: Installs the VirtualCamera4Mac virtual camera system extension.
+        # Required once the camera device entitlement is present (#42). The app
+        # only *sets* an output-transform property on the CMIO device; it never
+        # captures video. Without camera access a sandboxed app cannot reach the
+        # device, so the transform push silently no-ops.
+        NSCameraUsageDescription: VirtualCamera4Mac configures its virtual camera's output transform (mirror / flip / rotate). It does not record or capture video.
     entitlements:
       path: Sources/App/VirtualCamera4Mac.entitlements
       properties:
         com.apple.developer.system-extension.install: true
         com.apple.security.app-sandbox: true
+        # A sandboxed app needs the camera device entitlement to reach the CMIO
+        # device at all. Without it, CMIOObjectGetPropertyData returns no
+        # devices, so OutputTransformController.push() finds no device and the
+        # output-transform property never reaches the extension (#42). The app
+        # sets a custom device property only — it does not capture video.
+        com.apple.security.device.camera: true
         com.apple.security.application-groups:
           - $(TeamIdentifierPrefix)io.github.m96chan.VirtualCamera4Mac
     settings:

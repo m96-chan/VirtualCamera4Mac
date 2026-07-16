@@ -1,7 +1,11 @@
 import Foundation
 import Combine
 import CoreMediaIO
+import os.log
 import VirtualCameraCore
+
+private let logger = Logger(subsystem: "io.github.m96chan.VirtualCamera4Mac",
+                            category: "OutputTransform")
 
 /// Owns the user's output-transform choice (#6): mirror, vertical flip, and
 /// 180° rotation. Quarter-turn rotations change dimensions and land with
@@ -52,7 +56,14 @@ final class OutputTransformController: ObservableObject {
     // MARK: - CoreMediaIO custom property
 
     private func push(_ transform: FrameTransform) {
-        guard let device = Self.findDevice(uid: VirtualCameraIdentity.deviceUID) else { return }
+        // A silent no-op here previously masked #42: a sandboxed app without the
+        // camera device entitlement finds no CMIO device, so the transform never
+        // reached the extension. Log every outcome so a regression is visible in
+        // the app's own log rather than invisible.
+        guard let device = Self.findDevice(uid: VirtualCameraIdentity.deviceUID) else {
+            logger.error("Cannot push transform \(transform.packed, privacy: .public): CMIO device not found (missing camera entitlement or extension inactive)")
+            return
+        }
         var address = CMIOObjectPropertyAddress(
             mSelector: Self.transformSelector,
             mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
@@ -63,8 +74,13 @@ final class OutputTransformController: ObservableObject {
         var packed = transform.packed
         guard let number = CFNumberCreate(kCFAllocatorDefault, .sInt32Type, &packed) else { return }
         var value: CFTypeRef = number
-        CMIOObjectSetPropertyData(device, &address, 0, nil,
-                                  UInt32(MemoryLayout<CFTypeRef>.size), &value)
+        let status = CMIOObjectSetPropertyData(device, &address, 0, nil,
+                                               UInt32(MemoryLayout<CFTypeRef>.size), &value)
+        if status == noErr {
+            logger.log("Pushed transform \(packed, privacy: .public) to device (rotation \(transform.rotation.rawValue, privacy: .public), mirror \(transform.mirroredHorizontally, privacy: .public), flip \(transform.flippedVertically, privacy: .public))")
+        } else {
+            logger.error("Failed to push transform \(packed, privacy: .public): CMIOObjectSetPropertyData status \(status, privacy: .public)")
+        }
     }
 
     /// FourCharCode `'xfrm'`, matching the extension's custom property raw value
