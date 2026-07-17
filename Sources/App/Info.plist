@@ -26,6 +26,8 @@
 	<string>13.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>VirtualCamera4Mac configures its virtual camera's output transform (mirror / flip / rotate). It does not record or capture video.</string>
 	<key>NSSystemExtensionUsageDescription</key>
 	<string>Installs the VirtualCamera4Mac virtual camera system extension.</string>
 </dict>
